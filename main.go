@@ -67,6 +67,10 @@ func (d *DirLocks) UnlockDir(dir string) {
 	m.Unlock()
 }
 
+func isVideo(ext string) bool {
+	return ext == "mp4" || ext == "mov" || ext == "m4v"
+}
+
 type State struct {
 	SrcPath string
 	Sum     []byte
@@ -76,7 +80,7 @@ type State struct {
 
 func (s *State) Directory() string {
 	dir := "Anarchs"
-	if s.Ext == "mov" || s.Ext == "mp4" {
+	if isVideo(s.Ext) {
 		dir = "Videos"
 	}
 	if !s.Ts.IsZero() {
@@ -124,8 +128,11 @@ func getType(f *os.File, path string) (string, error) {
 
 	ext := filepath.Ext(path)
 	ext = strings.ToLower(ext)
-	if ext == ".mp4" || ext == ".mov" {
-		return ext[1:], nil
+	if len(ext) > 1 {
+		ext = ext[1:]
+	}
+	if isVideo(ext) {
+		return ext, nil
 	}
 
 	return "", errors.New("Invalid file format")
