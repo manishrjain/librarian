@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,6 +76,9 @@ type State struct {
 
 func (s *State) Directory() string {
 	dir := "Anarchs"
+	if s.Ext == "mov" || s.Ext == "mp4" {
+		dir = "Videos"
+	}
 	if !s.Ts.IsZero() {
 		dir = s.Ts.Format("2006Jan")
 	}
@@ -110,16 +114,21 @@ func (s *State) LongPath() string {
 	return path + "." + s.Ext
 }
 
-func getType(f *os.File) (string, error) {
+func getType(f *os.File, path string) (string, error) {
 	if _, err := f.Seek(0, 0); err != nil {
 		return "", err
 	}
-	_, t, err := image.Decode(f)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return "", err
+	if _, t, err := image.Decode(f); err == nil {
+		return t, nil
 	}
-	return t, nil
+
+	ext := filepath.Ext(path)
+	ext = strings.ToLower(ext)
+	if ext == ".mp4" || ext == ".mov" {
+		return ext[1:], nil
+	}
+
+	return "", errors.New("Invalid file format")
 }
 
 func getSum(f *os.File) (csum []byte, rerr error) {
@@ -230,7 +239,7 @@ func handleFile(path string) error {
 
 	var state State
 	state.SrcPath = path
-	if state.Ext, err = getType(f); err != nil {
+	if state.Ext, err = getType(f, path); err != nil {
 		fmt.Printf("%s: Not an image file. Moving on...\n", path)
 		return nil
 	}
