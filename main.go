@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"math/rand"
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/rwcarlsen/goexif/exif"
@@ -23,8 +25,46 @@ var src = flag.String("src", "", "Choose directory to run this over")
 var dst = flag.String("dst", "", "Choose root folder to move files to")
 var dry = flag.Bool("dry", true, "Don't commit the changes."+
 	" Only show what would be performed")
+var deldups = flag.Bool("deletedups", false, "Delete duplicates present in source folder.")
+var numroutines = flag.Int("numroutines", 1, "Number of routines to run.")
 
 var dirs map[string]bool
+var dirlocks DirLocks
+
+// When running multiple goroutines to move files,
+// we want to ensure that conflict resolution between
+// files with the same generated name happens correctly.
+// For that purpose, only one file move can happen
+// per target directory at one time.
+type DirLocks struct {
+	locks   map[string]*sync.Mutex
+	maplock sync.Mutex
+}
+
+func (d *DirLocks) Init() {
+	d.locks = make(map[string]*sync.Mutex)
+}
+
+func (d *DirLocks) getLock(dir string) *sync.Mutex {
+	d.maplock.Lock()
+	if _, ok := d.locks[dir]; !ok {
+		d.locks[dir] = new(sync.Mutex)
+	}
+	d.maplock.Unlock()
+
+	m := d.locks[dir]
+	return m
+}
+
+func (d *DirLocks) LockDir(dir string) {
+	m := d.getLock(dir)
+	m.Lock()
+}
+
+func (d *DirLocks) UnlockDir(dir string) {
+	m := d.getLock(dir)
+	m.Unlock()
+}
 
 type State struct {
 	SrcPath string
@@ -33,8 +73,15 @@ type State struct {
 	Ts      time.Time
 }
 
-func (s *State) PathWithoutExtension(full bool) string {
+func (s *State) Directory() string {
 	dir := "Anarchs"
+	if !s.Ts.IsZero() {
+		dir = s.Ts.Format("2006Jan")
+	}
+	return path.Join(*dst, dir)
+}
+
+func (s *State) PathWithoutExtension(full bool) string {
 	name := ""
 	if s.Ts.IsZero() {
 		if full {
@@ -43,14 +90,13 @@ func (s *State) PathWithoutExtension(full bool) string {
 			name = fmt.Sprintf("%x", s.Sum[0:8])
 		}
 	} else {
-		dir = s.Ts.Format("2006Jan")
 		suffix := s.Sum[0:4]
 		if full {
 			suffix = s.Sum
 		}
 		name = fmt.Sprintf("%s_%x", s.Ts.Format("02_1504"), suffix)
 	}
-	folder := path.Join(*dst, dir)
+	folder := s.Directory()
 	return path.Join(folder, name)
 }
 
@@ -123,14 +169,25 @@ func getTimestamp(f *os.File) (rts time.Time, rerr error) {
 	return rts, errors.New("Unable to find ts")
 }
 
+// This is the function which does the heavy lifting of moving
+// or deleting the duplicates. It's important that it gets a
+// consistent read view of the final directory. For that purpose,
+// we have a directory level mutex lock to ensure only one
+// write operation happens at one time.
 func moveFile(state State) error {
+	dir := state.Directory()
+	dirlocks.LockDir(dir)
+	defer dirlocks.UnlockDir(dir)
+
+	if err := dirExists(dir); err != nil {
+		return err
+	}
+
 	pattern := state.PathWithoutExtension(false) + "*"
-	fmt.Printf("Pattern: %v\n", pattern)
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return err
 	}
-	fmt.Println(matches)
 	if len(matches) == 0 {
 		fmt.Printf("Moving %s to %s\n", state.SrcPath, state.ToPath())
 		if *dry {
@@ -150,10 +207,11 @@ func moveFile(state State) error {
 		}
 		if bytes.Equal(state.Sum, dupsum) {
 			// src is a duplicate of a file which already is copied to destination.
-			fmt.Printf("Already exists: %s. Deleting %s", dup, state.SrcPath)
-			if *dry {
+			fmt.Printf("Already exists: %s\n", dup)
+			if *dry || !*deldups {
 				return nil
 			}
+			fmt.Printf("DELETING %s\n", state.SrcPath)
 			return os.Remove(state.SrcPath)
 		}
 	}
@@ -164,7 +222,6 @@ func moveFile(state State) error {
 }
 
 func handleFile(path string) error {
-	fmt.Println("Considering " + path)
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -174,7 +231,7 @@ func handleFile(path string) error {
 	var state State
 	state.SrcPath = path
 	if state.Ext, err = getType(f); err != nil {
-		fmt.Println("Not an image file. Moving on...")
+		fmt.Printf("%s: Not an image file. Moving on...\n", path)
 		return nil
 	}
 
@@ -191,13 +248,22 @@ func handleFile(path string) error {
 	return moveFile(state)
 }
 
-func walkFn(path string, info os.FileInfo, err error) error {
-	if info.IsDir() {
-		fmt.Printf("Directory: %v\n", path)
-		return nil
-	}
+var lch chan string
 
-	return handleFile(path)
+func routine(wg *sync.WaitGroup) {
+	defer wg.Done()
+	for path := range lch {
+		if err := handleFile(path); err != nil {
+			panic(err)
+		}
+	}
+}
+
+func shuffle(a []string) {
+	for i := range a {
+		j := rand.Intn(i + 1)
+		a[i], a[j] = a[j], a[i]
+	}
 }
 
 func main() {
@@ -207,8 +273,40 @@ func main() {
 		return
 	}
 	dirs = make(map[string]bool)
+	dirlocks.Init()
+
+	lch = make(chan string)
+	wg := new(sync.WaitGroup)
+
+	for i := 0; i < *numroutines; i++ {
+		wg.Add(1)
+		go routine(wg)
+	}
+
+	var l []string
+	walkFn := func(path string, info os.FileInfo, err error) error {
+		if info.IsDir() {
+			fmt.Printf("Directory: %v\n", path)
+			return nil
+		}
+		l = append(l, path)
+		return nil
+	}
 
 	if err := filepath.Walk(*src, walkFn); err != nil {
 		panic(err)
 	}
+	fmt.Printf("Found %d files\n", len(l))
+	// Shuffle so our dir locks can avoid contention due to time locality of
+	// images, present next to each other in the source folder.
+	shuffle(l)
+
+	for _, path := range l {
+		lch <- path
+	}
+
+	close(lch)
+	fmt.Println("Closed channel. Waiting...")
+	wg.Wait()
+	fmt.Println("Done waiting.")
 }
