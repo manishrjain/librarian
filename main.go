@@ -26,7 +26,7 @@ var dst = flag.String("dst", "", "Choose root folder to move files to")
 var dry = flag.Bool("dry", true, "Don't commit the changes."+
 	" Only show what would be performed")
 var deldups = flag.Bool("deletedups", false, "Delete duplicates present in source folder.")
-var numroutines = flag.Int("numroutines", 1, "Number of routines to run.")
+var numroutines = flag.Int("numroutines", 2, "Number of routines to run.")
 
 var dirs map[string]bool
 var dirlocks DirLocks
@@ -278,6 +278,7 @@ func main() {
 	lch = make(chan string)
 	wg := new(sync.WaitGroup)
 
+	fmt.Printf("Using %d routines\n", *numroutines)
 	for i := 0; i < *numroutines; i++ {
 		wg.Add(1)
 		go routine(wg)
@@ -286,7 +287,6 @@ func main() {
 	var l []string
 	walkFn := func(path string, info os.FileInfo, err error) error {
 		if info.IsDir() {
-			fmt.Printf("Directory: %v\n", path)
 			return nil
 		}
 		l = append(l, path)
