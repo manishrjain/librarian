@@ -272,6 +272,10 @@ func main() {
 		flag.Usage()
 		return
 	}
+	if *dry {
+		fmt.Println("DRY mode. No changes would be committed.")
+	}
+
 	dirs = make(map[string]bool)
 	dirlocks.Init()
 
