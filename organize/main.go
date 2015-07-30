@@ -26,6 +26,7 @@ var src = flag.String("src", "", "Choose directory to run this over")
 var dst = flag.String("dst", "", "Choose root folder to move files to")
 var dry = flag.Bool("dry", true, "Don't commit the changes."+
 	" Only show what would be performed")
+var cpy = flag.Bool("copy", false, "Copy instead of move. Does not affect duplicate deletion behavior.")
 var deldups = flag.Bool("deletedups", false, "Delete duplicates present in source folder.")
 var numroutines = flag.Int("numroutines", 2, "Number of routines to run.")
 
@@ -84,7 +85,7 @@ func (s *State) Directory() string {
 		dir = "Videos"
 	}
 	if !s.Ts.IsZero() {
-		dir = s.Ts.Format("2006Jan")
+		dir = s.Ts.Format("2006.Jan")
 	}
 	return path.Join(*dst, dir)
 }
@@ -185,6 +186,23 @@ func getTimestamp(f *os.File) (rts time.Time, rerr error) {
 	return rts, errors.New("Unable to find ts")
 }
 
+func copyFile(s State) error {
+	in, err := os.Open(s.SrcPath)
+	if err != nil {
+		return err
+	}
+
+	out, err := os.Create(s.ToPath())
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
 // This is the function which does the heavy lifting of moving
 // or deleting the duplicates. It's important that it gets a
 // consistent read view of the final directory. For that purpose,
@@ -204,12 +222,22 @@ func moveFile(state State) error {
 	if err != nil {
 		return err
 	}
+
 	if len(matches) == 0 {
-		fmt.Printf("Moving %s to %s\n", state.SrcPath, state.ToPath())
+		if *cpy {
+			fmt.Printf("Copying %s to %s\n", state.SrcPath, state.ToPath())
+		} else {
+			fmt.Printf("Moving %s to %s\n", state.SrcPath, state.ToPath())
+		}
 		if *dry {
 			return nil
 		}
-		return os.Rename(state.SrcPath, state.ToPath())
+
+		if *cpy {
+			return copyFile(state)
+		} else {
+			return os.Rename(state.SrcPath, state.ToPath())
+		}
 	}
 
 	for _, dup := range matches {
@@ -283,6 +311,8 @@ func shuffle(a []string) {
 }
 
 func main() {
+	rand.Seed(time.Now().UnixNano())
+
 	flag.Parse()
 	if *src == "" || *dst == "" {
 		flag.Usage()
@@ -304,11 +334,13 @@ func main() {
 		go routine(wg)
 	}
 
+	var total int64
 	var l []string
 	walkFn := func(path string, info os.FileInfo, err error) error {
 		if info.IsDir() {
 			return nil
 		}
+		total += info.Size()
 		l = append(l, path)
 		return nil
 	}
@@ -316,7 +348,7 @@ func main() {
 	if err := filepath.Walk(*src, walkFn); err != nil {
 		panic(err)
 	}
-	fmt.Printf("Found %d files\n", len(l))
+	fmt.Printf("Found %d files of size: %.2f GB\n", len(l), float64(total)/(1024*1024*1024))
 	// Shuffle so our dir locks can avoid contention due to time locality of
 	// images, present next to each other in the source folder.
 	shuffle(l)
