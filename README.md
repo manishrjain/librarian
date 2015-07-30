@@ -4,6 +4,9 @@ Librarian package allows you to do 2 things:
 
 - **Dedup** your media -- If you already have a directory full of photos and videos, you can run this tool to find both exact and approximate duplicates, given a matching threshold, and help you delete them. Approximate duplicates could mean files which match over 95%, and is very helpful for video files, which might have slightly different headers.
 
+#### See it in action
+[Organizing 70GB of media](http://showterm.io/20a33a98bc4fcfa0fe7d6) into a 52GB (de-duped) well arranged directory.
+
 ### Installation
 ```go
 # Organizer
