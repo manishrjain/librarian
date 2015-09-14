@@ -319,7 +319,8 @@ func main() {
 		return
 	}
 	if *dry {
-		fmt.Println("DRY mode. No changes would be committed.")
+		fmt.Println("DRY MODE. No changes would be committed.")
+		fmt.Println("----------------------------------------")
 	}
 
 	dirs = make(map[string]bool)

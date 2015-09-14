@@ -47,6 +47,9 @@ func ratioMatch(v1, v2 Video) float64 {
 	if len(v1.Checksums) != len(v2.Checksums) {
 		return 0.0
 	}
+	if len(v1.Checksums) == 0 {
+		return 0.0
+	}
 
 	matches := 0
 	for idx, h1 := range v1.Checksums {
@@ -103,13 +106,14 @@ func main() {
 			}
 			ratio := ratioMatch(*v1, *v2)
 			if ratio < *percent {
-				fmt.Printf("NO Match: %.2f for [%s] [%s]\n", ratio, v1.Path, v2.Path)
+				fmt.Printf("Equal checksum, but NO Match: %.2f for [%q] [%q]\n",
+					ratio, v1.Path, v2.Path)
 
 			} else {
 				matches += 1
-				fmt.Printf("Match: %.2f for [%s] [%s]\n", ratio, v1.Path, v2.Path)
+				fmt.Printf("Match: %.2f for [%q] [%q]\n", ratio, v1.Path, v2.Path)
 				if *deletedups {
-					fmt.Printf("DELETING: [%s]\n", v1.Path)
+					fmt.Printf("DELETING: [%q]\n", v1.Path)
 					if err := os.Remove(v1.Path); err != nil {
 						panic(err)
 					}
