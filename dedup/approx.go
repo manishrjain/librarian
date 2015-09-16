@@ -86,6 +86,7 @@ func main() {
 	filepath.Walk(*dir, walkFn)
 
 	matches := 0
+	var potential float64
 	for i := range videos {
 		for j := i + 1; j < len(videos); j++ {
 			v1 := videos[i]
@@ -111,6 +112,7 @@ func main() {
 
 			} else {
 				matches += 1
+				potential += float64(v1.Size)
 				fmt.Printf("Match: %.2f for [%q] [%q]\n", ratio, v1.Path, v2.Path)
 				if *deletedups {
 					fmt.Printf("DELETING: [%q]\n", v1.Path)
@@ -124,6 +126,7 @@ func main() {
 	}
 
 	fmt.Printf("Matches found: %d\n", matches)
+	fmt.Printf("Potential Save: %.2f MB\n", potential/(1024*1024))
 	if *deletedups {
 		fmt.Printf("DELETED files: %d\n", matches)
 	}
